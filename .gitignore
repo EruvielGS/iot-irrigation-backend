@@ -1,0 +1,6 @@
+# Tu configuración específica
+dist/
+node_modules/
+logs/
+*.log
+package-lock.json
