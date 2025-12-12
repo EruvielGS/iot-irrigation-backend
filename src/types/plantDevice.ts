@@ -5,6 +5,7 @@ export interface PlantDevice {
   name: string;
   description?: string;
   macAddress?: string;
+  ownerEmail?: string;       // Email del propietario para notificaciones
 
   // Umbrales de Humedad Ambiental
   minHumidity?: number;

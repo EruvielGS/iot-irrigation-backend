@@ -166,15 +166,26 @@ export class TelemetryService {
   private async getTargetEmail(plantId: string): Promise<string> {
     try {
       const device = await deviceService.getDeviceByPlantId(plantId);
-      if (device && device.ownerId) {
-        // Aquí podrías obtener el email del usuario desde MongoDB
-        // Por ahora retornamos el email por defecto
-        return process.env.SMTP_USER || "your-email@gmail.com";
+      
+      // 1. Primero intentar obtener email del dispositivo
+      if (device?.ownerEmail) {
+        console.log(`📧 Email encontrado en device: ${device.ownerEmail}`);
+        return device.ownerEmail;
       }
+      
+      // 2. Usar email de notificaciones configurado en .env
+      if (process.env.NOTIFICATION_EMAIL) {
+        console.log(`📧 Usando NOTIFICATION_EMAIL: ${process.env.NOTIFICATION_EMAIL}`);
+        return process.env.NOTIFICATION_EMAIL;
+      }
+      
+      // 3. Fallback al email SMTP del remitente
+      console.log(`📧 Usando SMTP_USER por defecto: ${process.env.SMTP_USER}`);
+      return process.env.SMTP_USER || "your-email@gmail.com";
     } catch (error) {
-      console.error("⚠️ No se pudo obtener email del propietario");
+      console.error("⚠️ No se pudo obtener email del propietario:", error);
+      return process.env.NOTIFICATION_EMAIL || process.env.SMTP_USER || "your-email@gmail.com";
     }
-    return process.env.SMTP_USER || "your-email@gmail.com";
   }
 
   private async saveAlertToMongo(
