@@ -26,12 +26,15 @@ export class AnalyticsService {
         |> last()
     `;
 
+    console.log(`🔍 Ejecutando query InfluxDB para ${plantId}:`, query);
+
     const result: any = {};
 
     return new Promise((resolve, reject) => {
       queryApi.queryRows(query, {
         next: (row, tableMeta) => {
           const o = tableMeta.toObject(row);
+          console.log(`📥 InfluxDB row recibida:`, o);
           if (o._field === "tempC") result.currentTemp = o._value;
           if (o._field === "soilHumidity") result.currentSoil = o._value;
           if (o._field === "lightLux") result.currentLight = o._value;
@@ -43,6 +46,7 @@ export class AnalyticsService {
           reject(error);
         },
         complete: () => {
+          console.log(`📊 Resultado acumulado de InfluxDB:`, result);
           const kpi: KpiDto = {
             currentTemp: result.currentTemp || 0,
             currentSoil: result.currentSoil || 0,
@@ -53,6 +57,7 @@ export class AnalyticsService {
             lastUpdate: new Date().toISOString(),
             pumpOn: result.pumpOn || false,
           };
+          console.log(`✅ KPI final calculado:`, kpi);
           resolve(kpi);
         },
       });
@@ -96,17 +101,68 @@ export class AnalyticsService {
     });
   }
 
-  async getHistoryCombined(plantId: string, range: string = "24h"): Promise<CombinedHistoryData[]> {
+  async getHistoryCombined(plantId: string, range: string = "72h", window?: string): Promise<CombinedHistoryData[]> {
     const queryApi = this.influxDB.getQueryApi(this.org);
 
+    console.log(`📊 Consultando historial combinado para ${plantId}, rango: ${range}, window: ${window || 'auto'}`);
+
+    // Primero verificar si HAY datos sin agregación
+    const simpleQuery = `
+      from(bucket: "${this.bucket}")
+        |> range(start: -${range})
+        |> filter(fn: (r) => r["_measurement"] == "sensores_planta")
+        |> filter(fn: (r) => r["plant_id"] == "${plantId}")
+        |> limit(n: 5)
+    `;
+
+    console.log(`🔍 Verificando si existen datos para ${plantId}...`);
+    
+    let hasData = false;
+    await new Promise((resolve) => {
+      queryApi.queryRows(simpleQuery, {
+        next: (row, tableMeta) => {
+          const o = tableMeta.toObject(row);
+          console.log(`✅ DATO ENCONTRADO:`, {
+            time: o._time,
+            field: o._field,
+            value: o._value,
+            plant_id: o.plant_id,
+            measurement: o._measurement
+          });
+          hasData = true;
+        },
+        error: (error) => {
+          console.error("❌ Error en verificación:", error);
+          resolve(null);
+        },
+        complete: () => {
+          if (!hasData) {
+            console.log(`⚠️  NO se encontraron datos para ${plantId} en las últimas ${range}`);
+          }
+          resolve(null);
+        }
+      });
+    });
+
+    // Query con agregación adaptativa o personalizada
+    // Si no se especifica window, usar valores automáticos
+    let aggregationWindow: string;
+    if (window) {
+      aggregationWindow = window;
+    } else {
+      aggregationWindow = range === "72h" ? "10m" : range === "24h" ? "5m" : "1m";
+    }
+    
     const query = `
       from(bucket: "${this.bucket}")
         |> range(start: -${range})
         |> filter(fn: (r) => r["_measurement"] == "sensores_planta")
         |> filter(fn: (r) => r["plant_id"] == "${plantId}")
         |> filter(fn: (r) => r["_field"] == "tempC" or r["_field"] == "ambientHumidity" or r["_field"] == "soilHumidity" or r["_field"] == "lightLux")
-        |> aggregateWindow(every: 10m, fn: mean, createEmpty: false)
+        |> aggregateWindow(every: ${aggregationWindow}, fn: mean, createEmpty: false)
     `;
+
+    console.log(`🔍 Query InfluxDB con agregación (${aggregationWindow}):\n${query}`);
 
     const dataMap: Map<string, CombinedHistoryData> = new Map();
 
@@ -114,14 +170,38 @@ export class AnalyticsService {
       queryApi.queryRows(query, {
         next: (row, tableMeta) => {
           const o = tableMeta.toObject(row);
+          console.log(`📈 Fila recibida de InfluxDB:`, {
+            time: o._time,
+            field: o._field,
+            value: o._value,
+            plantId: o.plant_id
+          });
+          
           const timeKey = new Date(o._time).toISOString();
 
           if (!dataMap.has(timeKey)) {
-            dataMap.set(timeKey, {
-              time: new Date(o._time).toLocaleTimeString("es-ES", {
+            const date = new Date(o._time);
+            // Formato adaptativo según la cantidad de tiempo
+            let timeFormat: string;
+            if (range === "72h") {
+              // Para 3 días: mostrar día/mes hora:minuto
+              timeFormat = date.toLocaleDateString("es-ES", {
+                day: "2-digit",
+                month: "2-digit",
                 hour: "2-digit",
                 minute: "2-digit",
-              }),
+              });
+            } else {
+              // Para rangos cortos: solo hora:minuto:segundo
+              timeFormat = date.toLocaleTimeString("es-ES", {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              });
+            }
+            
+            dataMap.set(timeKey, {
+              time: timeFormat,
             });
           }
 
@@ -139,6 +219,60 @@ export class AnalyticsService {
           const data = Array.from(dataMap.values()).sort((a, b) => {
             return a.time.localeCompare(b.time);
           });
+          console.log(`✅ Historial combinado obtenido: ${data.length} puntos`);
+          resolve(data);
+        },
+      });
+    });
+  }
+
+  // Obtener todos los datos sin agregación (útil cuando hay pocos datos)
+  async getHistoryRaw(plantId: string, range: string = "1h", limit: number = 100): Promise<CombinedHistoryData[]> {
+    const queryApi = this.influxDB.getQueryApi(this.org);
+
+    console.log(`📊 Consultando historial RAW para ${plantId}, rango: ${range}, límite: ${limit}`);
+
+    const query = `
+      from(bucket: "${this.bucket}")
+        |> range(start: -${range})
+        |> filter(fn: (r) => r["_measurement"] == "sensores_planta")
+        |> filter(fn: (r) => r["plant_id"] == "${plantId}")
+        |> filter(fn: (r) => r["_field"] == "tempC" or r["_field"] == "ambientHumidity" or r["_field"] == "soilHumidity" or r["_field"] == "lightLux")
+        |> sort(columns: ["_time"], desc: false)
+        |> limit(n: ${limit})
+    `;
+
+    const dataMap: Map<string, CombinedHistoryData> = new Map();
+
+    return new Promise((resolve, reject) => {
+      queryApi.queryRows(query, {
+        next: (row, tableMeta) => {
+          const o = tableMeta.toObject(row);
+          const timeKey = new Date(o._time).toISOString();
+
+          if (!dataMap.has(timeKey)) {
+            dataMap.set(timeKey, {
+              time: new Date(o._time).toLocaleTimeString("es-ES", {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              }),
+            });
+          }
+
+          const entry = dataMap.get(timeKey)!;
+          if (o._field === "tempC") entry.temp = o._value;
+          if (o._field === "ambientHumidity") entry.ambientHum = o._value;
+          if (o._field === "soilHumidity") entry.soilHum = o._value;
+          if (o._field === "lightLux") entry.light = o._value;
+        },
+        error: (error) => {
+          console.error("❌ Error consultando historial raw:", error);
+          reject(error);
+        },
+        complete: () => {
+          const data = Array.from(dataMap.values());
+          console.log(`✅ Historial RAW obtenido: ${data.length} puntos`);
           resolve(data);
         },
       });

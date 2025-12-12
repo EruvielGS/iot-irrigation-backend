@@ -20,8 +20,13 @@ export class TelemetryService {
   private org: string;
   private minSoilHumidity: number;
   private maxTemp: number;
+  private latestReadings: Map<string, Reading>; // Cache de últimas lecturas
+  private emailCooldown: Map<string, number>; // Cooldown para emails por plantId + severity
+  private readonly EMAIL_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutos entre emails del mismo tipo
 
   constructor() {
+    this.latestReadings = new Map();
+    this.emailCooldown = new Map();
     const url = process.env.INFLUXDB_URL || "http://localhost:8086";
     const token = process.env.INFLUXDB_TOKEN || "";
     this.org = process.env.INFLUXDB_ORG || "iot-org";
@@ -70,8 +75,17 @@ export class TelemetryService {
       }
 
       // Enviar WebSocket y guardar
+      console.log(`📡 Enviando WebSocket TELEMETRY para ${reading.plantId}:`, {
+        tempC: reading.tempC,
+        soilHumidity: reading.soilHumidity,
+        ambientHumidity: reading.ambientHumidity,
+        lightLux: reading.lightLux
+      });
       webSocketService.sendUpdate(reading.plantId, WebSocketMessageType.TELEMETRY, reading);
       this.saveToInflux(reading);
+
+      // Guardar en cache de memoria para KPIs en tiempo real
+      this.latestReadings.set(reading.plantId, reading);
     } catch (error) {
       console.error("❌ Error procesando telemetría:", error);
     }
@@ -125,15 +139,20 @@ export class TelemetryService {
       // Activar riego
       actuatorService.sendCommand(reading.plantId, { command: "RIEGO" as any });
 
-      // Enviar email
-      await emailService.enviarAlertaHtml(
-        targetEmail,
-        "[IoT URGENTE: Riego Activado]",
-        "El sistema ha detectado humedad crítica y ha activado el riego automático.",
-        "CRITICA",
-        reading.plantId,
-        reading
-      );
+      // Enviar email solo si pasó el tiempo de cooldown
+      if (this.canSendEmail(reading.plantId, "CRITICA")) {
+        await emailService.enviarAlertaHtml(
+          targetEmail,
+          "[IoT URGENTE: Riego Activado]",
+          "El sistema ha detectado humedad crítica y ha activado el riego automático.",
+          "CRITICA",
+          reading.plantId,
+          reading
+        );
+        this.updateEmailCooldown(reading.plantId, "CRITICA");
+      } else {
+        console.log(`⏳ Email omitido por cooldown - CRITICA para ${reading.plantId}`);
+      }
     }
     // Alerta de temperatura alta
     else if (reading.tempC !== undefined && reading.tempC > this.maxTemp) {
@@ -151,16 +170,39 @@ export class TelemetryService {
         reading.tempC
       );
 
-      // Enviar email
-      await emailService.enviarAlertaHtml(
-        targetEmail,
-        "[IoT Alerta de Calor]",
-        "La temperatura ambiente ha superado el umbral seguro.",
-        "ALERTA",
-        reading.plantId,
-        reading
-      );
+      // Enviar email solo si pasó el tiempo de cooldown
+      if (this.canSendEmail(reading.plantId, "ALERTA")) {
+        await emailService.enviarAlertaHtml(
+          targetEmail,
+          "[IoT Alerta de Calor]",
+          "La temperatura ambiente ha superado el umbral seguro.",
+          "ALERTA",
+          reading.plantId,
+          reading
+        );
+        this.updateEmailCooldown(reading.plantId, "ALERTA");
+      } else {
+        console.log(`⏳ Email omitido por cooldown - ALERTA para ${reading.plantId}`);
+      }
     }
+  }
+
+  private canSendEmail(plantId: string, severity: string): boolean {
+    const key = `${plantId}-${severity}`;
+    const lastSent = this.emailCooldown.get(key);
+    
+    if (!lastSent) {
+      return true; // Primera vez, permitir
+    }
+    
+    const elapsed = Date.now() - lastSent;
+    return elapsed >= this.EMAIL_COOLDOWN_MS;
+  }
+
+  private updateEmailCooldown(plantId: string, severity: string): void {
+    const key = `${plantId}-${severity}`;
+    this.emailCooldown.set(key, Date.now());
+    console.log(`⏰ Cooldown actualizado para ${key} - próximo email en 5 minutos`);
   }
 
   private async getTargetEmail(plantId: string): Promise<string> {
@@ -214,20 +256,40 @@ export class TelemetryService {
 
   private saveToInflux(reading: Reading): void {
     try {
+      console.log(`💾 Guardando en InfluxDB - PlantId: ${reading.plantId}`);
+      
       const point = new Point(MEASUREMENT_SENSORES_PLANTA)
         .tag(TAG_PLANT_ID, reading.plantId)
         .tag(TAG_STATUS_QC, reading.qcStatus || QcStatus.QC_ERROR)
         .timestamp(reading.timestamp || new Date());
 
-      if (reading.tempC !== undefined) point.floatField("tempC", reading.tempC);
-      if (reading.ambientHumidity !== undefined)
+      console.log(`🏷️  Tags: plant_id="${reading.plantId}", status_qc="${reading.qcStatus || QcStatus.QC_ERROR}"`);
+      console.log(`📅 Timestamp: ${reading.timestamp || new Date()}`);
+
+      if (reading.tempC !== undefined) {
+        point.floatField("tempC", reading.tempC);
+        console.log(`  ✓ tempC: ${reading.tempC}`);
+      }
+      if (reading.ambientHumidity !== undefined) {
         point.intField("ambientHumidity", reading.ambientHumidity);
-      if (reading.soilHumidity !== undefined) point.intField("soilHumidity", reading.soilHumidity);
-      if (reading.lightLux !== undefined) point.intField("lightLux", reading.lightLux);
-      if (reading.pumpOn !== undefined) point.booleanField("pumpOn", reading.pumpOn);
+        console.log(`  ✓ ambientHumidity: ${reading.ambientHumidity}`);
+      }
+      if (reading.soilHumidity !== undefined) {
+        point.intField("soilHumidity", reading.soilHumidity);
+        console.log(`  ✓ soilHumidity: ${reading.soilHumidity}`);
+      }
+      if (reading.lightLux !== undefined) {
+        point.intField("lightLux", reading.lightLux);
+        console.log(`  ✓ lightLux: ${reading.lightLux}`);
+      }
+      if (reading.pumpOn !== undefined) {
+        point.booleanField("pumpOn", reading.pumpOn);
+        console.log(`  ✓ pumpOn: ${reading.pumpOn}`);
+      }
 
       this.writeApi.writePoint(point);
       this.writeApi.flush();
+      console.log(`✅ Datos guardados exitosamente en InfluxDB (measurement: ${MEASUREMENT_SENSORES_PLANTA}, tag: ${TAG_PLANT_ID}=${reading.plantId})`);
     } catch (error) {
       console.error("❌ Error guardando en InfluxDB:", error);
     }
@@ -243,6 +305,11 @@ export class TelemetryService {
     } catch (error) {
       console.error("❌ Error actualizando estado del dispositivo:", error);
     }
+  }
+
+  // Método para obtener las últimas lecturas en tiempo real (para KPIs)
+  getLatestReading(plantId: string): Reading | null {
+    return this.latestReadings.get(plantId) || null;
   }
 
   async close(): Promise<void> {

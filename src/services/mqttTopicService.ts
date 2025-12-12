@@ -2,11 +2,11 @@ export class MqttTopicService {
   private readonly BASE_TOPIC = "planta";
 
   getDeviceDataTopic(plantId: string): string {
-    return `${this.BASE_TOPIC}/${plantId}/data`;
+    return `${this.BASE_TOPIC}/${plantId}/lecturas`;
   }
 
   getDeviceCommandTopic(plantId: string): string {
-    return `${this.BASE_TOPIC}/${plantId}/command`;
+    return `${this.BASE_TOPIC}/${plantId}/command/`;
   }
 
   getWebSocketTopic(plantId: string): string {

@@ -26,14 +26,18 @@ export class WebSocketService {
   }
 
   sendUpdate(plantId: string, type: WebSocketMessageType, data: any): void {
+    const formattedData = this.formatData(type, data);
     const message: WebSocketMessage = {
       type,
       plantId,
-      data: this.formatData(type, data),
+      data: formattedData,
       timestamp: new Date().toISOString(),
     };
 
     const jsonMessage = JSON.stringify(message);
+    
+    console.log(`📤 WebSocket broadcast para ${plantId}:`, message);
+    console.log(`👥 Clientes conectados: ${this.clients.size}`);
 
     this.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {

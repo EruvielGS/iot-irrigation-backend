@@ -75,14 +75,19 @@ app.get("/", (req, res) => {
 // Middleware de manejo de errores
 app.use(errorLogger);
 
+// Instancia global del servicio MQTT
+let mqttService: MQTTService | null = null;
+
 // Inicialización de servicios
 async function initializeServices() {
   try {
+    console.log("🚀 Inicializando servicios...");
+    
     // Conectar MongoDB
     await mongoDBService.connect();
 
-    // Conectar MQTT
-    const mqttService = new MQTTService();
+    // Conectar MQTT con HiveMQ
+    mqttService = new MQTTService();
     mqttService.connect();
 
     console.log("✅ Todos los servicios inicializados correctamente");
@@ -97,6 +102,11 @@ async function gracefulShutdown() {
   console.log("🛑 Iniciando apagado graceful...");
   
   try {
+    // Desconectar MQTT
+    if (mqttService) {
+      mqttService.disconnect();
+    }
+    
     await telemetryService.close();
     await mongoDBService.disconnect();
     

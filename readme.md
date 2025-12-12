@@ -46,8 +46,13 @@ INFLUXDB_TOKEN=my-super-secret-token
 INFLUXDB_ORG=iot-org
 INFLUXDB_BUCKET=irrigation-data
 
-# MQTT
-MQTT_URL=mqtt://localhost:1883
+# MQTT - HiveMQ Cloud (Configuración Actual) ☁️
+MQTT_URL=ssl://4af2e02d30094389b2d8963af54158dd.s1.eu.hivemq.cloud:8883
+MQTT_USER=backend_user
+MQTT_PASSWORD=@Perico123
+MQTT_CLIENT_ID=SpringCloud_01
+# Para usar broker local Mosquitto en su lugar, descomenta:
+# MQTT_URL=mqtt://localhost:1883
 
 # Email (Nodemailer)
 SMTP_HOST=smtp.gmail.com
@@ -142,9 +147,43 @@ Una vez ejecutado todo, verifica que esté funcionando:
 - Panel web: http://localhost:8086
 - Usuario: `admin` / Contraseña: `admin123456`
 
-### 4. **MQTT Broker**
-- Escuchando en: `mqtt://localhost:1883`
-- Puerto WebSocket: `9001`
+### 4. **MQTT Broker - HiveMQ Cloud ☁️** (Configuración Actual)
+- **Broker SSL:** `ssl://4af2e02d30094389b2d8963af54158dd.s1.eu.hivemq.cloud:8883`
+- **Estado:** Conectado si ves `✅ Conectado exitosamente al broker HiveMQ Cloud`
+- **Dashboard:** https://console.hivemq.cloud
+- **Documentación:** Ver [HIVEMQ_SETUP.md](./HIVEMQ_SETUP.md) para más detalles
+
+*Nota: Si prefieres usar Mosquitto local, cambia `MQTT_URL` a `mqtt://localhost:1883` en `.env`*
+
+## 📡 Configuración MQTT
+
+### HiveMQ Cloud (Actual) ☁️
+El sistema está configurado para usar HiveMQ Cloud, un servicio MQTT gestionado:
+
+**Ventajas:**
+- ✅ Sin necesidad de mantener broker local
+- ✅ Conexión SSL/TLS segura
+- ✅ Alta disponibilidad (99.99% uptime)
+- ✅ Accesible desde cualquier lugar
+- ✅ Dashboard web para monitoreo
+
+**Configuración en .env:**
+```env
+MQTT_URL=ssl://4af2e02d30094389b2d8963af54158dd.s1.eu.hivemq.cloud:8883
+MQTT_USER=backend_user
+MQTT_PASSWORD=@Perico123
+MQTT_CLIENT_ID=SpringCloud_01
+```
+
+📖 **Para más información:** Lee [HIVEMQ_SETUP.md](./HIVEMQ_SETUP.md)
+
+### Mosquitto Local (Alternativa)
+Si prefieres usar un broker MQTT local:
+
+1. Asegúrate de que `mosquitto.conf` exista
+2. Levanta Mosquitto con Docker: `docker-compose up -d mosquitto`
+3. Cambia en `.env`: `MQTT_URL=mqtt://localhost:1883`
+4. Reinicia el backend
 
 ## 📁 Estructura del Proyecto
 
