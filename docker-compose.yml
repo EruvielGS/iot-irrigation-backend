@@ -1,37 +1,88 @@
 version: '3.8'
 
 services:
+  # MongoDB
+  mongodb:
+    image: mongo:latest
+    container_name: iot-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: iot-irrigation
+    restart: unless-stopped
+    networks:
+      - iot-network
+
+  # InfluxDB
   influxdb:
     image: influxdb:2.7
-    container_name: iot_influxdb
-    environment:
-      - DOCKER_INFLUXDB_INIT_MODE=setup
-      - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=password123
-      - DOCKER_INFLUXDB_INIT_ORG=iot-org
-      - DOCKER_INFLUXDB_INIT_BUCKET=irrigation-data
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-super-secret-token
+    container_name: iot-influxdb
     ports:
       - "8086:8086"
     volumes:
       - influxdb_data:/var/lib/influxdb2
+      - influxdb_config:/etc/influxdb2
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: admin123456
+      DOCKER_INFLUXDB_INIT_ORG: iot-org
+      DOCKER_INFLUXDB_INIT_BUCKET: irrigation-data
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: my-super-secret-token
+    restart: unless-stopped
     networks:
       - iot-network
 
-  mqtt-broker:
-    image: eclipse-mosquitto:2.0
-    container_name: iot_mqtt
+  # Mosquitto MQTT Broker
+  mosquitto:
+    image: eclipse-mosquitto:latest
+    container_name: iot-mosquitto
     ports:
       - "1883:1883"
       - "9001:9001"
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_logs:/mosquitto/log
+    restart: unless-stopped
     networks:
       - iot-network
 
-volumes:
-  influxdb_data:
+  # Backend API (opcional - puedes ejecutarlo localmente con npm run dev)
+  # Para usar este servicio, descomenta las líneas siguientes
+  # backend:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: iot-backend
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     PORT: 3000
+  #     NODE_ENV: production
+  #     MONGODB_URI: mongodb://mongodb:27017/iot-irrigation
+  #     INFLUXDB_URL: http://influxdb:8086
+  #     INFLUXDB_TOKEN: my-super-secret-token
+  #     INFLUXDB_ORG: iot-org
+  #     INFLUXDB_BUCKET: irrigation-data
+  #     MQTT_URL: mqtt://mosquitto:1883
+  #   depends_on:
+  #     - mongodb
+  #     - influxdb
+  #     - mosquitto
+  #   restart: unless-stopped
+  #   networks:
+  #     - iot-network
 
 networks:
   iot-network:
     driver: bridge
+
+volumes:
+  mongodb_data:
+  influxdb_data:
+  influxdb_config:
+  mosquitto_data:
+  mosquitto_logs:
