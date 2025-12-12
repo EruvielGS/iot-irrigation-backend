@@ -1,16 +1,11 @@
 import mqtt, { MqttClient } from "mqtt";
-import { SensorData } from "../types/sensor";
-import { DataStorageService } from "./dataStorageService";
-import { QualityCheckService } from "./qualityCheckService";
-import { NotificationService } from "./notificationService";
+import { Reading, MessageType } from "../types/reading";
+import { telemetryService } from "./telemetryService";
+import { actuatorService } from "./actuatorService";
+import { mqttTopicService } from "./mqttTopicService";
 
 export class MQTTService {
   private client: MqttClient | null = null;
-  private storageService: DataStorageService;
-
-  constructor() {
-    this.storageService = new DataStorageService();
-  }
 
   public connect(): void {
     const mqttUrl = process.env.MQTT_URL || "mqtt://localhost:1883";
@@ -19,8 +14,12 @@ export class MQTTService {
 
     this.client.on("connect", () => {
       console.log("✅ Conectado al broker MQTT");
-      this.client!.subscribe("sensors/+/data");
-      this.client!.subscribe("sensors/+/status");
+      
+      // Suscribirse a todos los tópicos de datos
+      this.client!.subscribe("planta/+/data", { qos: 1 });
+      this.client!.subscribe("planta/+/status", { qos: 1 });
+      
+      console.log("📡 Suscrito a: planta/+/data y planta/+/status");
     });
 
     this.client.on("message", async (topic, message) => {
@@ -28,7 +27,7 @@ export class MQTTService {
         const data = JSON.parse(message.toString());
 
         if (topic.includes("/data")) {
-          await this.handleSensorData(data);
+          await this.handleSensorData(topic, data);
         } else if (topic.includes("/status")) {
           await this.handleStatusMessage(data);
         }
@@ -40,50 +39,57 @@ export class MQTTService {
     this.client.on("error", (error) => {
       console.error("❌ Error MQTT:", error);
     });
+
+    this.client.on("reconnect", () => {
+      console.log("🔄 Reconectando al broker MQTT...");
+    });
+
+    // Configurar el cliente MQTT en el actuator service
+    actuatorService.setMqttClient(this.client);
   }
 
-  private async handleSensorData(data: any): Promise<void> {
-    const sensorData: SensorData = {
-      deviceId: data.deviceId,
-      humidity: data.humidity,
-      temperature: data.temperature,
-      batteryLevel: data.batteryLevel,
-      timestamp: new Date(data.timestamp || Date.now()),
-    };
+  private async handleSensorData(topic: string, data: any): Promise<void> {
+    try {
+      // Extraer plantId del tópico: planta/{plantId}/data
+      const parts = topic.split("/");
+      const plantId = parts[1];
 
-    // Verificar calidad de datos
-    const qualityCheck = QualityCheckService.checkDataQuality(sensorData);
+      const reading: Reading = {
+        plantId,
+        tempC: data.tempC || data.temperature,
+        ambientHumidity: data.ambientHumidity || data.humidity,
+        soilHumidity: data.soilHumidity || data.soilHum,
+        lightLux: data.lightLux || data.light,
+        pumpOn: data.pumpOn,
+        timestamp: new Date(data.timestamp || Date.now()),
+        msgType: data.msgType || MessageType.READING,
+      };
 
-    // Almacenar datos
-    const storedData = await this.storageService.storeSensorData(
-      sensorData,
-      qualityCheck
-    );
-
-    // Verificar y enviar notificaciones
-    if (qualityCheck.isValid) {
-      await NotificationService.checkAndNotify(sensorData, qualityCheck.score);
+      // Procesar y guardar usando el servicio de telemetría
+      await telemetryService.processAndSave(reading);
+    } catch (error) {
+      console.error("❌ Error manejando datos del sensor:", error);
     }
-
-    console.log(
-      `📊 Datos procesados - Device: ${sensorData.deviceId}, Humedad: ${sensorData.humidity}, Calidad: ${qualityCheck.score}`
-    );
   }
 
   private async handleStatusMessage(data: any): Promise<void> {
     console.log("📡 Mensaje de estado recibido:", data);
-    // Aquí puedes manejar mensajes de estado del dispositivo
   }
 
   public publish(topic: string, message: any): void {
     if (this.client && this.client.connected) {
-      this.client.publish(topic, JSON.stringify(message));
+      this.client.publish(topic, JSON.stringify(message), { qos: 1 });
     }
   }
 
   public disconnect(): void {
     if (this.client) {
       this.client.end();
+      console.log("🔒 Desconectado del broker MQTT");
     }
+  }
+
+  public getClient(): MqttClient | null {
+    return this.client;
   }
 }

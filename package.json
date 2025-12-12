@@ -22,9 +22,11 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
+    "mongodb": "^6.21.0",
     "morgan": "^1.10.1",
     "mqtt": "^5.14.1",
     "nodemailer": "^7.0.10",
+    "sockjs": "^0.3.24",
     "ws": "^8.18.3"
   },
   "devDependencies": {
@@ -34,6 +36,7 @@
     "@types/mqtt": "^0.0.34",
     "@types/node": "^24.10.1",
     "@types/nodemailer": "^7.0.4",
+    "@types/sockjs": "^0.3.36",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
     "@types/ws": "^8.18.1",

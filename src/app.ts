@@ -9,14 +9,18 @@ import { createServer } from "http";
 // Configuración de environment
 dotenv.config();
 
-// Importaciones de rutas y configuraciones
+// Importaciones de configuraciones y servicios
 import { setupSwagger } from "./utils/swagger";
 import { requestLogger, errorLogger } from "./middleware/logger";
+import { mongoDBService } from "./config/mongodb";
 import { MQTTService } from "./services/mqttService";
-import { NotificationService } from "./services/notificationService";
+import { webSocketService } from "./services/webSocketService";
+import { telemetryService } from "./services/telemetryService";
 
 // Importación de rutas
-import { sensorRoutes } from "./routes/sensorRoutes";
+import { deviceRoutes } from "./routes/deviceRoutes";
+import { analyticsRoutes } from "./routes/analyticsRoutes";
+import { alertRoutes } from "./routes/alertRoutes";
 import { notificationRoutes } from "./routes/notificationRoutes";
 
 const app = express();
@@ -25,15 +29,7 @@ const port = process.env.PORT || 3000;
 
 // WebSocket Server
 const wss = new WebSocket.Server({ server });
-
-wss.on("connection", (ws) => {
-  console.log("🔗 Nuevo cliente WebSocket conectado");
-  NotificationService.addWebSocketClient(ws);
-
-  ws.on("close", () => {
-    console.log("🔒 Cliente WebSocket desconectado");
-  });
-});
+webSocketService.setWebSocketServer(wss);
 
 // Middleware
 app.use(helmet());
@@ -46,7 +42,9 @@ app.use(requestLogger);
 setupSwagger(app);
 
 // Rutas
-app.use("/api/sensors", sensorRoutes);
+app.use("/api/devices", deviceRoutes);
+app.use("/api/analytics", analyticsRoutes);
+app.use("/api/alerts", alertRoutes);
 app.use("/api/notifications", notificationRoutes);
 
 // Ruta de health check
@@ -62,11 +60,13 @@ app.get("/health", (req, res) => {
 app.get("/", (req, res) => {
   res.json({
     message: "Bienvenido al Sistema de Riego Inteligente IoT",
-    version: "1.0.0",
+    version: "2.0.0",
     endpoints: {
       documentation: "/api-docs",
       health: "/health",
-      sensors: "/api/sensors",
+      devices: "/api/devices",
+      analytics: "/api/analytics",
+      alerts: "/api/alerts",
       notifications: "/api/notifications",
     },
   });
@@ -76,37 +76,50 @@ app.get("/", (req, res) => {
 app.use(errorLogger);
 
 // Inicialización de servicios
-const mqttService = new MQTTService();
-mqttService.connect();
+async function initializeServices() {
+  try {
+    // Conectar MongoDB
+    await mongoDBService.connect();
+
+    // Conectar MQTT
+    const mqttService = new MQTTService();
+    mqttService.connect();
+
+    console.log("✅ Todos los servicios inicializados correctamente");
+  } catch (error) {
+    console.error("❌ Error inicializando servicios:", error);
+    process.exit(1);
+  }
+}
 
 // Manejo de graceful shutdown
-process.on("SIGTERM", () => {
-  console.log("🛑 Recibido SIGTERM, cerrando servidor...");
-  mqttService.disconnect();
-  server.close(() => {
-    console.log("✅ Servidor cerrado");
-    process.exit(0);
-  });
-});
+async function gracefulShutdown() {
+  console.log("🛑 Iniciando apagado graceful...");
+  
+  try {
+    await telemetryService.close();
+    await mongoDBService.disconnect();
+    
+    server.close(() => {
+      console.log("✅ Servidor cerrado");
+      process.exit(0);
+    });
+  } catch (error) {
+    console.error("❌ Error durante el apagado:", error);
+    process.exit(1);
+  }
+}
 
-process.on("SIGINT", () => {
-  console.log("🛑 Recibido SIGINT, cerrando servidor...");
-  mqttService.disconnect();
-  server.close(() => {
-    console.log("✅ Servidor cerrado");
-    process.exit(0);
-  });
-});
+process.on("SIGTERM", gracefulShutdown);
+process.on("SIGINT", gracefulShutdown);
 
 // Iniciar servidor
-server.listen(port, () => {
-  console.log(`🚀 Servidor ejecutándose en http://localhost:${port}`);
-  console.log(
-    `📚 Documentación disponible en http://localhost:${port}/api-docs`
-  );
-  console.log(
-    `📚 Documentación disponible en http://localhost:${port}/api-docs.json`
-  );
+initializeServices().then(() => {
+  server.listen(port, () => {
+    console.log(`🚀 Servidor ejecutándose en http://localhost:${port}`);
+    console.log(`📚 Documentación disponible en http://localhost:${port}/api-docs`);
+    console.log(`🔌 WebSocket disponible en ws://localhost:${port}`);
+  });
 });
 
 export default app;
