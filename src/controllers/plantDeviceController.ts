@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import { deviceService } from "../services/deviceService";
 import { actuatorService } from "../services/actuatorService";
+import { emailService } from "../services/emailService";
+import { mongoDBService } from "../config/mongodb";
 import { CreateDeviceRequest, PlantDeviceUpdateDto } from "../types/plantDevice";
 import { GenericCommandPayload } from "../types/command";
 
@@ -106,6 +108,89 @@ export const PlantDeviceController = {
       } else {
         res.status(500).json({ error: "Error interno al procesar la solicitud" });
       }
+    }
+  },
+
+  // Enviar notificación de prueba
+  async sendTestNotification(req: Request, res: Response): Promise<void> {
+    try {
+      const { plantId } = req.params;
+
+      const device = await deviceService.getDeviceByPlantId(plantId);
+      if (!device) {
+        res.status(404).json({ error: "Dispositivo no encontrado" });
+        return;
+      }
+
+      // Crear alerta de prueba en MongoDB
+      const collection = mongoDBService.getPlantAlertsCollection();
+      const alert = {
+        plantId: plantId,
+        message: `Notificación de prueba para ${device.name}`,
+        severity: "INFO",
+        metricType: "TEST",
+        metricValue: 0,
+        timestamp: new Date().toISOString(),
+        isRead: false,
+      };
+
+      await collection.insertOne(alert as any);
+
+      // Enviar email de prueba
+      const targetEmail = device.ownerEmail || process.env.NOTIFICATION_EMAIL || process.env.SMTP_USER || "";
+      
+      if (targetEmail) {
+        await emailService.enviarAlertaHtml(
+          targetEmail,
+          `[IoT] Notificación de Prueba - ${device.name}`,
+          "Esta es una notificación de prueba del sistema de riego IoT. Si recibiste este email, las notificaciones están funcionando correctamente.",
+          "INFO",
+          plantId,
+          {
+            plantId,
+            tempC: 25,
+            ambientHumidity: 60,
+            soilHumidity: 50,
+            lightLux: 1000,
+            pumpOn: false,
+          } as any
+        );
+      }
+
+      console.log(`🔔 Notificación de prueba enviada para ${plantId} a ${targetEmail}`);
+      res.json({ 
+        message: "Notificación de prueba enviada exitosamente",
+        email: targetEmail,
+        alert 
+      });
+    } catch (error: any) {
+      console.error("Error enviando notificación de prueba:", error);
+      res.status(500).json({ error: error.message || "Error interno del servidor" });
+    }
+  },
+
+  // Eliminar dispositivo
+  async deleteDevice(req: Request, res: Response): Promise<void> {
+    try {
+      const { plantId } = req.params;
+
+      const device = await deviceService.getDeviceByPlantId(plantId);
+      if (!device) {
+        res.status(404).json({ error: "Dispositivo no encontrado" });
+        return;
+      }
+
+      const deleted = await deviceService.deleteDevice(plantId);
+      
+      if (deleted) {
+        console.log(`🗑️  Dispositivo ${plantId} eliminado exitosamente`);
+        res.json({ message: "Dispositivo eliminado exitosamente" });
+      } else {
+        res.status(500).json({ error: "No se pudo eliminar el dispositivo" });
+      }
+    } catch (error: any) {
+      console.error("Error al eliminar dispositivo:", error);
+      res.status(500).json({ error: error.message || "Error interno del servidor" });
     }
   },
 };

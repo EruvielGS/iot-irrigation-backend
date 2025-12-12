@@ -42,6 +42,7 @@ export class DeviceService {
       plantId: request.plantId,
       name: request.name,
       ownerId: request.userId,
+      ownerEmail: request.ownerEmail,  // Email para notificaciones
       isActive: true,
       topic: mqttTopicService.getDeviceDataTopic(request.plantId),
       qosLevel: 1,
@@ -79,6 +80,18 @@ export class DeviceService {
     await collection.updateOne({ plantId }, { $set: updateFields });
 
     return (await collection.findOne({ plantId }))!;
+  }
+
+  async deleteDevice(plantId: string): Promise<boolean> {
+    const collection = mongoDBService.getPlantDevicesCollection();
+
+    const device = await collection.findOne({ plantId });
+    if (!device) {
+      throw new Error("Dispositivo no encontrado");
+    }
+
+    const result = await collection.deleteOne({ plantId });
+    return result.deletedCount > 0;
   }
 }
 

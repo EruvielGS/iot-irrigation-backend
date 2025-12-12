@@ -45,4 +45,5 @@ export interface CreateDeviceRequest {
   plantId: string;
   name: string;
   userId: string;
+  ownerEmail?: string;  // Email para recibir notificaciones
 }

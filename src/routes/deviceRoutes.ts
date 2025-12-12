@@ -17,3 +17,9 @@ deviceRoutes.put("/:plantId/thresholds", PlantDeviceController.updateDeviceThres
 
 // Enviar comando manual
 deviceRoutes.post("/:plantId/command", PlantDeviceController.triggerManualCommand);
+
+// Enviar notificación de prueba
+deviceRoutes.post("/:plantId/test-notification", PlantDeviceController.sendTestNotification);
+
+// Eliminar dispositivo
+deviceRoutes.delete("/:plantId", PlantDeviceController.deleteDevice);
